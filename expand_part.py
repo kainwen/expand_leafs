@@ -54,6 +54,11 @@ def step1(relname, childs, dbname, port, host, new_cluster_size, user):
     db = DB(dbname=dbname, host=host, port=port, user=user)
     db.query("set allow_system_table_mods = on;")
     db.query("begin;")
+
+    ## lock the root and all leafs
+    print("Step 1: Trying to grab ACCESS EXCLUSIVE lock on root and all childs: root is {relname}").format(relname=relname)
+    db.query("lock {relname} IN ACCESS EXCLUSIVE MODE".format(relname=relname))
+
     sql1 = ("update gp_distribution_policy "
             "set numsegments = {new_cluster_size} "
             "where localoid in ({oid_list})").format(new_cluster_size=new_cluster_size,
@@ -166,6 +171,8 @@ if __name__ == "__main__":
     else:
         with open(childrenfile) as fp:
             childs = [line.strip() for line in fp]
+
+    all_childs = get_child_names_of_root(root, dbname, port, host, user)
     
-    step1(root, childs, dbname, port, host, newsize, user)
+    step1(root, all_childs, dbname, port, host, newsize, user)
     step2(root, childs, dbname, port, host, njobs, distby, user)
