@@ -94,11 +94,11 @@ def step2_one_rel(child, db, distkey, distclass, distby):
     sql2 = ("alter table {relname} set with (REORGANIZE=true) "
             "distributed by ({distby})").format(distby=distby, relname=child)
     print("-------------------------------------------------------------------")
-    print("Step 2: beginning alter table REORGANIZE on {relname}:").format(relname=relname)
+    print("Step 2: beginning alter table REORGANIZE on {relname}:").format(relname=child)
 
     db.query(sql2)
     db.query("end;")
-    print("Step 2: finished alter table REORGANIZE on {relname}:").format(relname=relname)
+    print("Step 2: finished alter table REORGANIZE on {relname}:").format(relname=child)
     print("-------------------------------------------------------------------")
 
 def step2_worker(wid, concurrency, childs, dbname, port, host, distkey, distclass, distby, user):
@@ -144,9 +144,9 @@ if __name__ == "__main__":
     parser.add_argument('--distby', type=str, help='root table distby clause, like "c1, c2"')
     parser.add_argument('--dbname', type=str, help='database name to connect')
     parser.add_argument('--host', type=str, help='hostname to connect')
-    parser.add_argument('--childrenfile', type=str, 'file containing fully qualified child partition names') # each line will contain a single name to be done in order
+    parser.add_argument('--childrenfile', type=str, help='file containing fully qualified child partition names') # each line will contain a single name to be done in order
     parser.add_argument('--port', type=int, help='port to connect')
-    parser.add_argument('--user', type=int, help='username to connect with')
+    parser.add_argument('--user', type=str, help='username to connect with')
 
     args = parser.parse_args()
     
@@ -161,7 +161,7 @@ if __name__ == "__main__":
     user = args.user
 
     # Populate fqns of children from childrenfile OR derive from root partition name
-    if len(childrenfile) == 0:
+    if not childrenfile:
         childs = get_child_names_of_root(root, dbname, port, host, user)
     else:
         with open(childrenfile) as fp:
