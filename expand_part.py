@@ -16,8 +16,8 @@ be leaf partitioned as well.
 """
 
 # relname = foo.bar
-def get_child_names_of_root(relname, dbname, port, host):
-    db = DB(dbname=dbname, host=host, port=port)
+def get_child_names_of_root(relname, dbname, port, host, user):
+    db = DB(dbname=dbname, host=host, port=port, user=user)
     schema_name, table_name = relname.split('.')
     
     sql = ("select partitionschemaname || '.' || partitiontablename from pg_partitions "
@@ -35,7 +35,7 @@ def get_oid_list(names):
 ## relname (str): root partition's name fully qualified
 ## childs  ([str]): all the leafs' name fully qualified
 ## new_cluster_size (int): the cluster size after expansion
-def step1(relname, childs, dbname, port, host, new_cluster_size):
+def step1(relname, childs, dbname, port, host, new_cluster_size, user):
     """
     step1:
       in a single transaction change root+all leafs's
@@ -51,7 +51,7 @@ def step1(relname, childs, dbname, port, host, new_cluster_size):
     We can fix this later or we can write UDFs here.
     """
     all_parts_with_root_names = [relname] + childs
-    db = DB(dbname=dbname, host=host, port=port)
+    db = DB(dbname=dbname, host=host, port=port, user=user)
     db.query("set allow_system_table_mods = on;")
     db.query("begin;")
     sql1 = ("update gp_distribution_policy "
@@ -65,12 +65,14 @@ def step1(relname, childs, dbname, port, host, new_cluster_size):
     db.query(sql2)
     db.query("end;")
     db.close()
-    print("Step 1 complete: Distribution policies of root and leaf partitions updated")
+    print("Step 1 complete: Distribution policies of root and leaf partitions updated for {relname}").format(relname=relname)
 
 # child is fully qualified
 def step2_one_rel(child, db, distkey, distclass, distby):
     db.query("begin;")
+    print("Step 2: Trying to grab ACCESS EXCLUSIVE lock on child: {relname}").format(relname=child)
     db.query("lock {relname} IN ACCESS EXCLUSIVE MODE".format(relname=child))
+    print("Step 2: Successfully grabbed ACCESS EXCLUSIVE lock on child: {relname}").format(relname=child)
 
     ## Santiy Check if the rel is already hash dist
     ## If so, we just skip. This makes the script
@@ -88,13 +90,19 @@ def step2_one_rel(child, db, distkey, distclass, distby):
                                                                   distclass=distclass,
                                                                   relname=child)
     db.query(sql1)
+
     sql2 = ("alter table {relname} set with (REORGANIZE=true) "
             "distributed by ({distby})").format(distby=distby, relname=child)
+    print("-------------------------------------------------------------------")
+    print("Step 2: beginning alter table REORGANIZE on {relname}:").format(relname=relname)
+
     db.query(sql2)
     db.query("end;")
+    print("Step 2: finished alter table REORGANIZE on {relname}:").format(relname=relname)
+    print("-------------------------------------------------------------------")
 
-def step2_worker(wid, concurrency, childs, dbname, port, host, distkey, distclass, distby):
-    db = DB(dbname=dbname, host=host, port=port)
+def step2_worker(wid, concurrency, childs, dbname, port, host, distkey, distclass, distby, user):
+    db = DB(dbname=dbname, host=host, port=port, user=user)
     db.query("set allow_system_table_mods = on;")
     for id, child in enumerate(childs):
         if id % concurrency == wid:
@@ -102,8 +110,8 @@ def step2_worker(wid, concurrency, childs, dbname, port, host, distkey, distclas
     db.close()
 
 # relname should be fully qualified
-def get_dist_info(relname, dbname, port, host):
-    db = DB(dbname=dbname, host=host, port=port)
+def get_dist_info(relname, dbname, port, host, user):
+    db = DB(dbname=dbname, host=host, port=port, user=user)
     sql = ("select distkey, distclass from gp_distribution_policy "
            "where localoid = '{relname}'::regclass::oid").format(relname=relname)
     print("get_dist_info prints %s" %sql)
@@ -115,13 +123,13 @@ def get_dist_info(relname, dbname, port, host):
 ## childs  ([str]): all the leafs' name
 ## concurrency(int): how many leafs to expand at the same time
 ## distby  (str): root partition's distby, like "c1,c2"
-def step2(relname, childs, dbname, port, host, concurrency, distby):
-    distkey, distclass = get_dist_info(relname, dbname, port, host)
+def step2(relname, childs, dbname, port, host, concurrency, distby, user):
+    distkey, distclass = get_dist_info(relname, dbname, port, host, user)
     ps = []
     for i in range(concurrency):
         p = Process(target=step2_worker, args=(i, concurrency, childs,
                                                dbname, port, host,
-                                               distkey, distclass, distby))
+                                               distkey, distclass, distby, user))
         p.start()
         ps.append(p)
     for p in ps:
@@ -136,7 +144,9 @@ if __name__ == "__main__":
     parser.add_argument('--distby', type=str, help='root table distby clause, like "c1, c2"')
     parser.add_argument('--dbname', type=str, help='database name to connect')
     parser.add_argument('--host', type=str, help='hostname to connect')
+    parser.add_argument('--childrenfile', type=str, 'file containing fully qualified child partition names') # each line will contain a single name to be done in order
     parser.add_argument('--port', type=int, help='port to connect')
+    parser.add_argument('--user', type=int, help='username to connect with')
 
     args = parser.parse_args()
     
@@ -147,7 +157,15 @@ if __name__ == "__main__":
     njobs = args.njobs
     newsize = args.newsize
     distby = args.distby
-    childs = get_child_names_of_root(root, dbname, port, host)
-     
-    step1(root, childs, dbname, port, host, newsize)
-    step2(root, childs, dbname, port, host, njobs, distby)
+    childrenfile = args.childrenfile
+    user = args.user
+
+    # Populate fqns of children from childrenfile OR derive from root partition name
+    if len(childrenfile) == 0:
+        childs = get_child_names_of_root(root, dbname, port, host, user)
+    else:
+        with open(childrenfile) as fp:
+            childs = [line.strip() for line in fp]
+    
+    step1(root, childs, dbname, port, host, newsize, user)
+    step2(root, childs, dbname, port, host, njobs, distby, user)
