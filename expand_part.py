@@ -30,6 +30,9 @@ def get_oid_list(names):
                       for name in names])
 
 # we do not need to handle random policy table
+## relname (str): root partition's name 
+## childs  ([str]): all the leafs' name
+## new_cluster_size (int): the cluster size after expansion
 def step1(relname, childs, dbname, port, host, new_cluster_size):
     """
     step1:
@@ -66,6 +69,17 @@ def step1(relname, childs, dbname, port, host, new_cluster_size):
 def step2_one_rel(child, db, distkey, distclass, distby):
     db.query("begin;")
     db.query("lock {relname} IN ACCESS EXCLUSIVE MODE".format(relname=child))
+
+    ## Santiy Check if the rel is already hash dist
+    ## If so, we just skip. This makes the script
+    ## can be killed and then re-continue.
+    sql0 = ("select distkey from gp_distribution_policy "
+            "where localoid = '{relname}'::regclass::oid").format(relname=child)
+    r = db.query(sql0).getresult()[0][0]
+    if r != '':
+        db.query("end;")
+        return
+
     sql1 = ("update gp_distribution_policy "
             "set distkey = '{distkey}', distclass = '{distclass}' "
             "where localoid = '{relname}'::regclass::oid").format(distkey=distkey,
@@ -93,6 +107,10 @@ def get_dist_info(relname, dbname, port, host):
     db.close()
     return r[0]
 
+## relname (str): root partition's name 
+## childs  ([str]): all the leafs' name
+## concurrency(int): how many leafs to expand at the same time
+## distby  (str): root partition's distby, like "c1,c2"
 def step2(relname, childs, dbname, port, host, concurrency, distby):
     distkey, distclass = get_dist_info(relname, dbname, port, host)
     ps = []
