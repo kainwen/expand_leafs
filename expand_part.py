@@ -19,12 +19,13 @@ be leaf partitioned as well.
 
 """
 
-def get_child_of_root(relname):
-    c = []
-    with open("/home/gpadmin/test/childs") as f:
-        for line in f:
-            c.append(line.strip().strip(","))
-    return c
+def get_child_of_root(relname, dbname, port, host):
+    db = DB(dbname=dbname, host=host, port=port)
+    sql = ("select partitiontablename from pg_partitions "
+           "where tablename = '{relname}'").format(relname=relname)
+    r = db.query(sql).getresult()
+    db.close()
+    return [p[0] for p in r]
 
 def get_oid_list(names):
     return ", ".join(["'%s'::regclass::oid" % name
@@ -144,7 +145,7 @@ if __name__ == "__main__":
     njobs = args.njobs
     newsize = args.newsize
     distby = args.distby
-    childs = get_child_of_root(root)
+    childs = get_child_of_root(root, dbname, port, host)
     
     step1(root, childs, dbname, port, host, newsize)
     step2(root, childs, dbname, port, host, njobs, distby)
