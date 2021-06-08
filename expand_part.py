@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 #-*- coding: utf-8 -*-
 
+import argparse
 from pygresql.pg import DB
 from multiprocessing import Process
 
@@ -125,6 +126,25 @@ def step2(relname, childs, dbname, port, host, concurrency, distby):
 
    
 if __name__ == "__main__":
-    childs = get_child_of_root("rank")
-    step1("rank", childs, "gpadmin", 6000, "zlyu", 4)
-    step2("rank", childs, "gpadmin", 6000, "zlyu", 4, "id")
+    parser = argparse.ArgumentParser(description='Expand leafs one by one')
+    parser.add_argument('--root', type=str, help='root partition name')
+    parser.add_argument('--njobs', type=int, help='number of concurrent leafs to expand at the same time')
+    parser.add_argument('--newsize', type=int, help='cluster size after expansion')
+    parser.add_argument('--distby', type=str, help='root table distby clause, like "c1, c2"')
+    parser.add_argument('--dbname', type=str, help='database name to connect')
+    parser.add_argument('--host', type=str, help='hostname to connect')
+    parser.add_argument('--port', type=int, help='port to connect')
+
+    args = parser.parse_args()
+    
+    root = args.root
+    dbname = args.dbname
+    port = args.port
+    host = args.host
+    njobs = args.njobs
+    newsize = args.newsize
+    distby = args.distby
+    childs = get_child_of_root(root)
+    
+    step1(root, childs, dbname, port, host, newsize)
+    step2(root, childs, dbname, port, host, njobs, distby)
