@@ -16,4 +16,4 @@ $$ language 'plpgsql' STRICT;
 
 insert into rank
 select i, i, random_between(2005, 2017), 'g', i
-from generate_series(1, 100)i;
+from generate_series(1, 100000)i;

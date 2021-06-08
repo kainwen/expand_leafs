@@ -7,33 +7,33 @@ from multiprocessing import Process
 
 
 """The golden rule
-
 https://groups.google.com/a/greenplum.org/g/gpdb-dev/c/rSacd_vI-fM/m/pkAW-Z-lCgAJ
-
 If a partitioned table is Hash distributed, then all its leaf partitions
 must also be Hash partitioned on the same distribution key, with the
 same 'numsegments', or randomly distributed.
-
 If a partitioned table is Randomly distributed, then all the leafs must
 be leaf partitioned as well.
-
 """
 
-def get_child_of_root(relname, dbname, port, host):
+# relname = foo.bar
+def get_child_names_of_root(relname, dbname, port, host):
     db = DB(dbname=dbname, host=host, port=port)
-    sql = ("select partitiontablename from pg_partitions "
-           "where tablename = '{relname}'").format(relname=relname)
+    schema_name, table_name = relname.split('.')
+    
+    sql = ("select partitionschemaname || '.' || partitiontablename from pg_partitions "
+           "where tablename = '{table_name}' and partitionschemaname='{schema_name}'").format(table_name=table_name, schema_name=schema_name)
     r = db.query(sql).getresult()
     db.close()
     return [p[0] for p in r]
 
+# names should be fully qualified
 def get_oid_list(names):
     return ", ".join(["'%s'::regclass::oid" % name
                       for name in names])
 
 # we do not need to handle random policy table
-## relname (str): root partition's name 
-## childs  ([str]): all the leafs' name
+## relname (str): root partition's name fully qualified
+## childs  ([str]): all the leafs' name fully qualified
 ## new_cluster_size (int): the cluster size after expansion
 def step1(relname, childs, dbname, port, host, new_cluster_size):
     """
@@ -41,25 +41,23 @@ def step1(relname, childs, dbname, port, host, new_cluster_size):
       in a single transaction change root+all leafs's
       policy.numsegments = full cluster size;
       change all leafs to randomly dist.
-
     after step1:
       root is hash on all segs (full cluster size)
       leafs is random on all segs
-
     !!!!!! NOTE
     We simply update the gp_policy catalog here, it should
     be OK and do no harm except these statements are not
     dispatched to QEs, so gp_policy will not be consistent.
     We can fix this later or we can write UDFs here.
     """
-    all_parts_with_root = [relname] + childs
+    all_parts_with_root_names = [relname] + childs
     db = DB(dbname=dbname, host=host, port=port)
     db.query("set allow_system_table_mods = on;")
     db.query("begin;")
     sql1 = ("update gp_distribution_policy "
             "set numsegments = {new_cluster_size} "
             "where localoid in ({oid_list})").format(new_cluster_size=new_cluster_size,
-                                                     oid_list=get_oid_list(all_parts_with_root))
+                                                     oid_list=get_oid_list(all_parts_with_root_names))
     db.query(sql1)
     sql2 = ("update gp_distribution_policy "
             "set distkey = '', distclass = '' "
@@ -67,7 +65,9 @@ def step1(relname, childs, dbname, port, host, new_cluster_size):
     db.query(sql2)
     db.query("end;")
     db.close()
+    print("Step 1 complete: Distribution policies of root and leaf partitions updated")
 
+# child is fully qualified
 def step2_one_rel(child, db, distkey, distclass, distby):
     db.query("begin;")
     db.query("lock {relname} IN ACCESS EXCLUSIVE MODE".format(relname=child))
@@ -101,10 +101,12 @@ def step2_worker(wid, concurrency, childs, dbname, port, host, distkey, distclas
             step2_one_rel(child, db, distkey, distclass, distby)
     db.close()
 
+# relname should be fully qualified
 def get_dist_info(relname, dbname, port, host):
     db = DB(dbname=dbname, host=host, port=port)
     sql = ("select distkey, distclass from gp_distribution_policy "
-           "where localoid = '{relanme}'::regclass::oid").format(relanme=relname)
+           "where localoid = '{relname}'::regclass::oid").format(relname=relname)
+    print("get_dist_info prints %s" %sql)
     r = db.query(sql).getresult()
     db.close()
     return r[0]
@@ -128,7 +130,7 @@ def step2(relname, childs, dbname, port, host, concurrency, distby):
    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Expand leafs one by one')
-    parser.add_argument('--root', type=str, help='root partition name')
+    parser.add_argument('--root', type=str, help='root partition name (fully qualified)')
     parser.add_argument('--njobs', type=int, help='number of concurrent leafs to expand at the same time')
     parser.add_argument('--newsize', type=int, help='cluster size after expansion')
     parser.add_argument('--distby', type=str, help='root table distby clause, like "c1, c2"')
@@ -145,7 +147,7 @@ if __name__ == "__main__":
     njobs = args.njobs
     newsize = args.newsize
     distby = args.distby
-    childs = get_child_of_root(root, dbname, port, host)
-    
+    childs = get_child_names_of_root(root, dbname, port, host)
+     
     step1(root, childs, dbname, port, host, newsize)
     step2(root, childs, dbname, port, host, njobs, distby)
