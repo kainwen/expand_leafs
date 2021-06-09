@@ -59,6 +59,20 @@ def step1(relname, childs, dbname, port, host, new_cluster_size, user):
     print("Step 1: Trying to grab ACCESS EXCLUSIVE lock on root and all childs: root is {relname}").format(relname=relname)
     db.query("lock {relname} IN ACCESS EXCLUSIVE MODE".format(relname=relname))
 
+    ## Check if step1 is needed
+    sql0 = ("select numsegments from gp_distribution_policy "
+            "where localoid in ({oid_list})").format(oid_list=get_oid_list(all_parts_with_root_names))
+    r = db.query(sql0).getresult()
+    numsegments = [tp[0] for tp in r if tp[0] == new_cluster_size]
+    ## either we are done step1 or we do not touch any of root and leafs
+    assert(len(numsegments) == 0 or #never touch
+           len(numsegments) == len(all_parts_with_root_names)) #done
+    if len(numsegments) == len(all_parts_with_root_names):
+        print("Step1: all is done, skip step 1 for this run")
+        db.query("end;")
+        db.close()
+        return
+
     sql1 = ("update gp_distribution_policy "
             "set numsegments = {new_cluster_size} "
             "where localoid in ({oid_list})").format(new_cluster_size=new_cluster_size,
@@ -86,6 +100,7 @@ def step2_one_rel(child, db, distkey, distclass, distby):
             "where localoid = '{relname}'::regclass::oid").format(relname=child)
     r = db.query(sql0).getresult()[0][0]
     if r != '':
+        print("Step 2: the leaf {child} is done, skip it".format(child=child))
         db.query("end;")
         return
 
