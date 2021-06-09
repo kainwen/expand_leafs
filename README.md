@@ -1,9 +1,9 @@
 ```
 gpadmin@zlyu:~/expand_leafs$ python expand_part.py -h
-usage: expand_part.py [-h] [--root ROOT] [--njobs NJOBS] [--newsize NEWSIZE]
-                      [--distby DISTBY] [--dbname DBNAME] [--host HOST]
-                      [--childrenfile CHILDRENFILE] [--port PORT]
-                      [--user USER]
+usage: expand_part.py [-h] --root ROOT --njobs NJOBS --newsize NEWSIZE
+                      --distby DISTBY --dbname DBNAME --host HOST
+                      [--childrenfile CHILDRENFILE] --port PORT --user USER
+                      --log LOG
 
 Expand leafs one by one
 
@@ -19,4 +19,5 @@ optional arguments:
                         file containing fully qualified child partition names
   --port PORT           port to connect
   --user USER           username to connect with
+  --log LOG             log file path
 ```

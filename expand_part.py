@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 #-*- coding: utf-8 -*-
 
+import os
 import argparse
-from datetime import datetime
+import logging
 from pygresql.pg import DB
 from multiprocessing import Process
 
@@ -16,8 +17,18 @@ If a partitioned table is Randomly distributed, then all the leafs must
 be leaf partitioned as well.
 """
 
+LOG_PATH = ""
+
 def my_print(msg):
-    print str(datetime.now()), msg
+    assert(len(LOG_PATH) > 0)
+    logger = logging.getLogger(str(os.getpid()))
+    if not len(logger.handlers):
+        hdlr = logging.FileHandler(LOG_PATH)
+        formatter = logging.Formatter('%(asctime)s p-%(process)d %(message)s')
+        hdlr.setFormatter(formatter)
+        logger.addHandler(hdlr)
+        logger.setLevel(logging.DEBUG)
+    logger.debug(msg)
 
 # relname = foo.bar
 def get_child_names_of_root(relname, dbname, port, host, user):
@@ -117,13 +128,11 @@ def step2_one_rel(child, db, distkey, distclass, distby):
 
     sql2 = ("alter table {relname} set with (REORGANIZE=true) "
             "distributed by ({distby})").format(distby=distby, relname=child)
-    my_print("-------------------------------------------------------------------")
     my_print("Step 2: beginning alter table REORGANIZE on {relname}:".format(relname=child))
 
     db.query(sql2)
     db.query("end;")
     my_print("Step 2: finished alter table REORGANIZE on {relname}:".format(relname=child))
-    my_print("-------------------------------------------------------------------")
 
 def step2_worker(wid, concurrency, childs, dbname, port, host, distkey, distclass, distby, user):
     db = DB(dbname=dbname, host=host, port=port, user=user)
@@ -162,15 +171,16 @@ def step2(relname, childs, dbname, port, host, concurrency, distby, user):
    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Expand leafs one by one')
-    parser.add_argument('--root', type=str, help='root partition name (fully qualified)')
-    parser.add_argument('--njobs', type=int, help='number of concurrent leafs to expand at the same time')
-    parser.add_argument('--newsize', type=int, help='cluster size after expansion')
-    parser.add_argument('--distby', type=str, help='root table distby clause, like "c1, c2"')
-    parser.add_argument('--dbname', type=str, help='database name to connect')
-    parser.add_argument('--host', type=str, help='hostname to connect')
+    parser.add_argument('--root', type=str, help='root partition name (fully qualified)', required=True)
+    parser.add_argument('--njobs', type=int, help='number of concurrent leafs to expand at the same time', required=True)
+    parser.add_argument('--newsize', type=int, help='cluster size after expansion', required=True)
+    parser.add_argument('--distby', type=str, help='root table distby clause, like "c1, c2"', required=True)
+    parser.add_argument('--dbname', type=str, help='database name to connect', required=True)
+    parser.add_argument('--host', type=str, help='hostname to connect', required=True)
     parser.add_argument('--childrenfile', type=str, help='file containing fully qualified child partition names') # each line will contain a single name to be done in order
-    parser.add_argument('--port', type=int, help='port to connect')
-    parser.add_argument('--user', type=str, help='username to connect with')
+    parser.add_argument('--port', type=int, help='port to connect', required=True)
+    parser.add_argument('--user', type=str, help='username to connect with', required=True)
+    parser.add_argument('--log', type=str, help='log file path', required=True)
 
     args = parser.parse_args()
     
@@ -183,6 +193,7 @@ if __name__ == "__main__":
     distby = args.distby
     childrenfile = args.childrenfile
     user = args.user
+    LOG_PATH = args.log
 
     # Populate fqns of children from childrenfile OR derive from root partition name
     if not childrenfile:
