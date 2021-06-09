@@ -2,6 +2,7 @@
 #-*- coding: utf-8 -*-
 
 import argparse
+from datetime import datetime
 from pygresql.pg import DB
 from multiprocessing import Process
 
@@ -14,6 +15,9 @@ same 'numsegments', or randomly distributed.
 If a partitioned table is Randomly distributed, then all the leafs must
 be leaf partitioned as well.
 """
+
+def my_print(msg):
+    print str(datetime.now()), msg
 
 # relname = foo.bar
 def get_child_names_of_root(relname, dbname, port, host, user):
@@ -56,7 +60,7 @@ def step1(relname, childs, dbname, port, host, new_cluster_size, user):
     db.query("begin;")
 
     ## lock the root and all leafs
-    print("Step 1: Trying to grab ACCESS EXCLUSIVE lock on root and all childs: root is {relname}").format(relname=relname)
+    my_print("Step 1: Trying to grab ACCESS EXCLUSIVE lock on root and all childs: root is {relname}".format(relname=relname))
     db.query("lock {relname} IN ACCESS EXCLUSIVE MODE".format(relname=relname))
 
     ## Check if step1 is needed
@@ -68,7 +72,7 @@ def step1(relname, childs, dbname, port, host, new_cluster_size, user):
     assert(len(numsegments) == 0 or #never touch
            len(numsegments) == len(all_parts_with_root_names)) #done
     if len(numsegments) == len(all_parts_with_root_names):
-        print("Step1: all is done, skip step 1 for this run")
+        my_print("Step1: all is done, skip step 1 for this run")
         db.query("end;")
         db.close()
         return
@@ -84,14 +88,14 @@ def step1(relname, childs, dbname, port, host, new_cluster_size, user):
     db.query(sql2)
     db.query("end;")
     db.close()
-    print("Step 1 complete: Distribution policies of root and leaf partitions updated for {relname}").format(relname=relname)
+    my_print("Step 1 complete: Distribution policies of root and leaf partitions updated for {relname}".format(relname=relname))
 
 # child is fully qualified
 def step2_one_rel(child, db, distkey, distclass, distby):
     db.query("begin;")
-    print("Step 2: Trying to grab ACCESS EXCLUSIVE lock on child: {relname}").format(relname=child)
+    my_print("Step 2: Trying to grab ACCESS EXCLUSIVE lock on child: {relname}".format(relname=child))
     db.query("lock {relname} IN ACCESS EXCLUSIVE MODE".format(relname=child))
-    print("Step 2: Successfully grabbed ACCESS EXCLUSIVE lock on child: {relname}").format(relname=child)
+    my_print("Step 2: Successfully grabbed ACCESS EXCLUSIVE lock on child: {relname}".format(relname=child))
 
     ## Santiy Check if the rel is already hash dist
     ## If so, we just skip. This makes the script
@@ -100,7 +104,7 @@ def step2_one_rel(child, db, distkey, distclass, distby):
             "where localoid = '{relname}'::regclass::oid").format(relname=child)
     r = db.query(sql0).getresult()[0][0]
     if r != '':
-        print("Step 2: the leaf {child} is done, skip it".format(child=child))
+        my_print("Step 2: the leaf {child} is done, skip it".format(child=child))
         db.query("end;")
         return
 
@@ -113,13 +117,13 @@ def step2_one_rel(child, db, distkey, distclass, distby):
 
     sql2 = ("alter table {relname} set with (REORGANIZE=true) "
             "distributed by ({distby})").format(distby=distby, relname=child)
-    print("-------------------------------------------------------------------")
-    print("Step 2: beginning alter table REORGANIZE on {relname}:").format(relname=child)
+    my_print("-------------------------------------------------------------------")
+    my_print("Step 2: beginning alter table REORGANIZE on {relname}:".format(relname=child))
 
     db.query(sql2)
     db.query("end;")
-    print("Step 2: finished alter table REORGANIZE on {relname}:").format(relname=child)
-    print("-------------------------------------------------------------------")
+    my_print("Step 2: finished alter table REORGANIZE on {relname}:".format(relname=child))
+    my_print("-------------------------------------------------------------------")
 
 def step2_worker(wid, concurrency, childs, dbname, port, host, distkey, distclass, distby, user):
     db = DB(dbname=dbname, host=host, port=port, user=user)
@@ -134,7 +138,7 @@ def get_dist_info(relname, dbname, port, host, user):
     db = DB(dbname=dbname, host=host, port=port, user=user)
     sql = ("select distkey, distclass from gp_distribution_policy "
            "where localoid = '{relname}'::regclass::oid").format(relname=relname)
-    print("get_dist_info prints %s" %sql)
+    my_print("get_dist_info prints %s" %sql)
     r = db.query(sql).getresult()
     db.close()
     return r[0]
